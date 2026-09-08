@@ -96,7 +96,8 @@ _GENDIR_ECHO = [ -d `dirname '$(2)'`/$(1) ] || mkdir -p `dirname '$(2)'`/$(1)
 GENLIBDIR = $(call _GENDIR_ECHO,.libs,$@)
 
 MKPATH := $(dir $(lastword $(MAKEFILE_LIST)))
-L = $(foreach d,$(1),-L$(d) -Wl,-rpath=$(CURDIR)/$(d))
+PLATFORM := $(shell uname -s)
+L = $(foreach d,$(1),-L$(d) -Wl,-rpath,$(CURDIR)/$(d))
 
 BUILDVERSION ?= debug
 LTBUILD ?= libtool
@@ -143,8 +144,18 @@ else
 endif
 ifndef ASAN
 ifndef MSAN
+ifeq ($(PLATFORM),Darwin)
+	LDFLAGS := -Wl,-not_for_dyld_shared_cache -Wl,-headerpad_max_install_names
+else
 	LDFLAGS := -Wl,--no-undefined
 endif
+endif
+endif
+
+ifeq ($(PLATFORM),Darwin)
+DARWIN_FIX_INSTALL_NAME = for dylib in .libs/$(basename $@).*.dylib; do [ -f "$$dylib" ] && [ ! -L "$$dylib" ] || continue; install_name_tool -id "@rpath/`basename "$$dylib"`" "$$dylib" || exit; done
+else
+DARWIN_FIX_INSTALL_NAME = :
 endif
 # Compiler specific settings. G++ requires output filtering, and Clang can do without
 # the caret stuff (switched on by VERBOSE)
@@ -235,11 +246,11 @@ $(foreach PART, $(CXXTARGETS), $(eval $(PART): $$(OBJECTS.$(PART)) ; \
 ifeq ($(LTBUILD), libtool)
 $(foreach PART, $(LTTARGETS), $(eval $(PART): $$(OBJECTS.$(PART)) ; \
 	$$(_VERBOSE_LDLT) libtool $(_VERBOSE_SILENT) --mode=link --tag=CC $$(CC) -shared $$(CFLAGS) $$(CFLAGS.$(PART)) $$(LDFLAGS) $$(LDFLAGS.$(PART)) \
-		-o $$@ $$^ $$(LDLIBS) $$(LDLIBS.$(PART)) -rpath /usr/lib))
+		-o $$@ $$^ $$(LDLIBS) $$(LDLIBS.$(PART)) -rpath /usr/lib && $$(DARWIN_FIX_INSTALL_NAME)))
 
 $(foreach PART, $(CXXLTTARGETS), $(eval $(PART): $$(OBJECTS.$(PART)) ; \
 	$$(_VERBOSE_LDLT) libtool $(_VERBOSE_SILENT) --mode=link --tag=CXX $$(CXX) -shared $$(CXXFLAGS) $$(CXXFLAGS.$(PART)) $$(LDFLAGS) $$(LDFLAGS.$(PART)) \
-		-o $$@ $$^ $$(LDLIBS) $$(LDLIBS.$(PART)) -rpath /usr/lib))
+		-o $$@ $$^ $$(LDLIBS) $$(LDLIBS.$(PART)) -rpath /usr/lib && $$(DARWIN_FIX_INSTALL_NAME)))
 else
 $(foreach PART, $(LTTARGETS), $(eval $(PART): $$(OBJECTS.$(PART)) ; \
 	$$(_VERBOSE_LDLT) $$(GENLIBDIR) && $$(CC) -shared $$(CFLAGS) $$(CFLAGS.$(PART)) $$(LDFLAGS) $$(LDFLAGS.$(PART)) \
@@ -335,4 +346,3 @@ clean::
 	rm -rf $(TARGETS) $(CXXTARGETS) $(LTTARGETS) $(CXXLTTARGETS) .deps .objects .libs >/dev/null 2>&1
 
 -include $(shell find .deps -type f 2>/dev/null)
-
